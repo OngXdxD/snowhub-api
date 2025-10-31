@@ -15,6 +15,9 @@ connectDB();
 // Initialize Express app
 const app = express();
 
+// Trust proxy - required when behind reverse proxies (Render, Heroku, etc.)
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
