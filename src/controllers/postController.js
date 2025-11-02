@@ -1,6 +1,5 @@
 const Post = require('../models/Post');
 const Comment = require('../models/Comment');
-const { uploadToCloudinary, deleteFromCloudinary } = require('../config/cloudinary');
 
 // @desc    Get all posts with pagination, sorting, and filtering
 // @route   GET /api/posts
@@ -122,45 +121,47 @@ exports.getPost = async (req, res) => {
 // @access  Private
 exports.createPost = async (req, res) => {
   try {
-    const { title, content, tag, location } = req.body;
+    const { title, content, tag, location, image } = req.body;
 
     // Validate required fields
-    if (!title || !content) {
+    if (!title || !content || !image) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide title and content'
+        message: 'Title, content, and image are required'
       });
     }
 
-    // Check if image was uploaded
-    if (!req.file) {
+    // Validate data types
+    if (typeof title !== 'string' || typeof content !== 'string' || typeof image !== 'string') {
       return res.status(400).json({
         success: false,
-        message: 'Please upload an image'
+        message: 'Invalid data types'
       });
     }
 
-    // Upload image to Cloudinary
-    let imageUrl;
-    try {
-      const result = await uploadToCloudinary(req.file.buffer, 'snowhub/posts');
-      imageUrl = result.secure_url;
-    } catch (uploadError) {
-      console.error('Image upload error:', uploadError);
+    // Validate field lengths
+    if (title.trim().length < 3 || title.trim().length > 100) {
       return res.status(400).json({
         success: false,
-        message: 'Failed to upload image'
+        message: 'Title must be between 3 and 100 characters'
       });
     }
 
-    // Create post
+    if (content.trim().length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Content must be at least 10 characters'
+      });
+    }
+
+    // Create post - image is just a filename (already uploaded to R2)
     const post = await Post.create({
-      title,
-      content,
-      image: imageUrl,
+      title: title.trim(),
+      content: content.trim(),
+      image: image.trim(), // Store filename only
       author: req.user._id,
-      tag: tag || 'Other',
-      location: location || ''
+      tag: tag?.trim() || 'Other',
+      location: location?.trim() || ''
     });
 
     // Populate author details
@@ -168,6 +169,7 @@ exports.createPost = async (req, res) => {
 
     res.status(201).json({
       success: true,
+      message: 'Post created successfully',
       data: post
     });
   } catch (error) {
@@ -201,26 +203,41 @@ exports.updatePost = async (req, res) => {
       });
     }
 
-    const { title, content, tag, location } = req.body;
+    const { title, content, tag, location, image } = req.body;
 
-    // Update fields
-    if (title) post.title = title;
-    if (content) post.content = content;
-    if (tag) post.tag = tag;
-    if (location !== undefined) post.location = location;
-
-    // Handle image update
-    if (req.file) {
-      try {
-        const result = await uploadToCloudinary(req.file.buffer, 'snowhub/posts');
-        post.image = result.secure_url;
-      } catch (uploadError) {
-        console.error('Image upload error:', uploadError);
+    // Update fields with validation
+    if (title) {
+      if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 100) {
         return res.status(400).json({
           success: false,
-          message: 'Failed to upload new image'
+          message: 'Title must be between 3 and 100 characters'
         });
       }
+      post.title = title.trim();
+    }
+
+    if (content) {
+      if (typeof content !== 'string' || content.trim().length < 10) {
+        return res.status(400).json({
+          success: false,
+          message: 'Content must be at least 10 characters'
+        });
+      }
+      post.content = content.trim();
+    }
+
+    if (tag) post.tag = tag.trim();
+    if (location !== undefined) post.location = location.trim();
+
+    // Handle image update - image is just a filename (already uploaded to R2)
+    if (image) {
+      if (typeof image !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid image filename'
+        });
+      }
+      post.image = image.trim();
     }
 
     await post.save();
@@ -228,6 +245,7 @@ exports.updatePost = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      message: 'Post updated successfully',
       data: post
     });
   } catch (error) {

@@ -7,10 +7,10 @@ const {
   getFollowers,
   getFollowing
 } = require('../controllers/userController');
-const { protect } = require('../middleware/auth');
+const { protect, optionalAuth } = require('../middleware/auth');
 
-// Public routes
-router.get('/:id', getUserProfile);
+// Public routes (optionalAuth allows checking if user is following)
+router.get('/:id', optionalAuth, getUserProfile);
 router.get('/:id/posts', getUserPosts);
 router.get('/:id/followers', getFollowers);
 router.get('/:id/following', getFollowing);

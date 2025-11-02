@@ -1,10 +1,19 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { uploadToCloudinary } = require('../config/cloudinary');
 
 // Generate JWT Token
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+  const secret = process.env.JWT_SECRET;
+  
+  if (!secret || secret.trim().length === 0) {
+    throw new Error('JWT_SECRET is not defined in environment variables');
+  }
+  
+  if (secret.length < 32) {
+    console.warn('⚠️  Warning: JWT_SECRET should be at least 32 characters long for security');
+  }
+  
+  return jwt.sign({ id }, secret, {
     expiresIn: process.env.JWT_EXPIRE || '30d'
   });
 };
@@ -156,7 +165,7 @@ exports.getMe = async (req, res) => {
 // @access  Private
 exports.updateMe = async (req, res) => {
   try {
-    const { username, email, bio, currentPassword, newPassword } = req.body;
+    const { username, email, bio, avatar, currentPassword, newPassword } = req.body;
 
     const user = await User.findById(req.user._id).select('+password');
 
@@ -169,9 +178,17 @@ exports.updateMe = async (req, res) => {
 
     // Update basic fields
     if (username) {
+      // Validate username
+      if (typeof username !== 'string' || username.trim().length < 3 || username.trim().length > 30) {
+        return res.status(400).json({
+          success: false,
+          message: 'Username must be between 3 and 30 characters'
+        });
+      }
+
       // Check if username is taken by another user
       const existingUser = await User.findOne({ 
-        username, 
+        username: username.trim(), 
         _id: { $ne: user._id } 
       });
       
@@ -181,13 +198,22 @@ exports.updateMe = async (req, res) => {
           message: 'Username already taken'
         });
       }
-      user.username = username;
+      user.username = username.trim();
     }
 
     if (email) {
+      // Validate email format
+      const emailRegex = /^\S+@\S+\.\S+$/;
+      if (typeof email !== 'string' || !emailRegex.test(email)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please enter a valid email address'
+        });
+      }
+
       // Check if email is taken by another user
       const existingUser = await User.findOne({ 
-        email, 
+        email: email.toLowerCase().trim(), 
         _id: { $ne: user._id } 
       });
       
@@ -197,25 +223,28 @@ exports.updateMe = async (req, res) => {
           message: 'Email already registered'
         });
       }
-      user.email = email;
+      user.email = email.toLowerCase().trim();
     }
 
     if (bio !== undefined) {
-      user.bio = bio;
-    }
-
-    // Handle avatar upload
-    if (req.file) {
-      try {
-        const result = await uploadToCloudinary(req.file.buffer, 'snowhub/avatars');
-        user.avatar = result.secure_url;
-      } catch (uploadError) {
-        console.error('Avatar upload error:', uploadError);
+      if (typeof bio !== 'string' || bio.length > 200) {
         return res.status(400).json({
           success: false,
-          message: 'Failed to upload avatar'
+          message: 'Bio cannot exceed 200 characters'
         });
       }
+      user.bio = bio.trim();
+    }
+
+    // Handle avatar update - avatar is just a filename (already uploaded to R2)
+    if (avatar) {
+      if (typeof avatar !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid avatar filename'
+        });
+      }
+      user.avatar = avatar.trim();
     }
 
     // Handle password change
@@ -229,7 +258,7 @@ exports.updateMe = async (req, res) => {
         });
       }
 
-      if (newPassword.length < 6) {
+      if (typeof newPassword !== 'string' || newPassword.length < 6) {
         return res.status(400).json({
           success: false,
           message: 'New password must be at least 6 characters long'
@@ -246,6 +275,7 @@ exports.updateMe = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      message: 'Profile updated successfully',
       data: updatedUser
     });
   } catch (error) {

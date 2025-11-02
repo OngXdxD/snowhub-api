@@ -3,12 +3,10 @@ const Post = require('../models/Post');
 
 // @desc    Get user profile
 // @route   GET /api/users/:id
-// @access  Public
+// @access  Public (optional auth for isFollowing)
 exports.getUserProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id)
-      .populate('followers', 'username avatar')
-      .populate('following', 'username avatar');
+    const user = await User.findById(req.params.id);
 
     if (!user) {
       return res.status(404).json({
@@ -20,13 +18,26 @@ exports.getUserProfile = async (req, res) => {
     // Get user's post count
     const postCount = await Post.countDocuments({ author: user._id });
 
+    // Check if current user is following this user (if authenticated)
+    let isFollowing = false;
+    if (req.user) {
+      const currentUser = await User.findById(req.user._id);
+      isFollowing = currentUser.following.includes(req.params.id);
+    }
+
     res.status(200).json({
       success: true,
-      data: {
-        ...user.toJSON(),
-        postCount,
-        followerCount: user.followers.length,
-        followingCount: user.following.length
+      id: user._id,
+      username: user.username,
+      bio: user.bio,
+      avatar: user.avatar, // Just filename
+      location: user.location || '',
+      joinedDate: user.createdAt,
+      isFollowing: isFollowing, // Only if requesting user is authenticated
+      stats: {
+        posts: postCount,
+        followers: user.followers.length,
+        following: user.following.length
       }
     });
   } catch (error) {
@@ -52,7 +63,7 @@ exports.getUserProfile = async (req, res) => {
 exports.getUserPosts = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 30;
     const skip = (page - 1) * limit;
 
     // Check if user exists
@@ -67,24 +78,28 @@ exports.getUserPosts = async (req, res) => {
 
     // Get user's posts
     const posts = await Post.find({ author: req.params.id })
-      .populate('author', 'username avatar')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 
     const total = await Post.countDocuments({ author: req.params.id });
 
+    // Format posts for profile page
+    const formattedPosts = posts.map(post => ({
+      id: post._id,
+      image: post.image, // Just filename
+      title: post.title,
+      likes: post.likeCount,
+      comments: post.commentCount,
+      createdAt: post.createdAt
+    }));
+
     res.status(200).json({
       success: true,
-      data: {
-        posts,
-        pagination: {
-          current: page,
-          pages: Math.ceil(total / limit),
-          total,
-          limit
-        }
-      }
+      posts: formattedPosts,
+      totalPosts: total,
+      page: page,
+      hasMore: total > page * limit
     });
   } catch (error) {
     console.error('Get user posts error:', error);
@@ -151,11 +166,8 @@ exports.followUser = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: {
-        following: !isFollowing,
-        followerCount: userToFollow.followers.length,
-        followingCount: currentUser.following.length
-      }
+      isFollowing: !isFollowing, // true if now following, false if unfollowed
+      followerCount: userToFollow.followers.length // Updated follower count
     });
   } catch (error) {
     console.error('Follow user error:', error);

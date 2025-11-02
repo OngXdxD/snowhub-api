@@ -33,6 +33,11 @@ const userSchema = new mongoose.Schema({
     maxlength: [200, 'Bio cannot exceed 200 characters'],
     default: ''
   },
+  location: {
+    type: String,
+    maxlength: [100, 'Location cannot exceed 100 characters'],
+    default: ''
+  },
   followers: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
