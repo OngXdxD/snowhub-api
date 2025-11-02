@@ -5,7 +5,9 @@ const {
   getUserPosts,
   followUser,
   getFollowers,
-  getFollowing
+  getFollowing,
+  bookmarkPost,
+  getBookmarks
 } = require('../controllers/userController');
 const { protect, optionalAuth } = require('../middleware/auth');
 
@@ -17,6 +19,8 @@ router.get('/:id/following', getFollowing);
 
 // Protected routes
 router.post('/:id/follow', protect, followUser);
+router.post('/:id/bookmark/:postId', protect, bookmarkPost); // Bookmark/unbookmark post
+router.get('/:id/bookmarks', protect, getBookmarks); // Get user's bookmarks
 
 module.exports = router;
 

@@ -37,7 +37,8 @@ exports.getUserProfile = async (req, res) => {
       stats: {
         posts: postCount,
         followers: user.followers.length,
-        following: user.following.length
+        following: user.following.length,
+        bookmarks: user.bookmarks.length
       }
     });
   } catch (error) {
@@ -285,6 +286,151 @@ exports.getFollowing = async (req, res) => {
     });
   } catch (error) {
     console.error('Get following error:', error);
+    
+    if (error.kind === 'ObjectId') {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+// @desc    Bookmark/unbookmark a post
+// @route   POST /api/users/:userId/bookmark/:postId
+// @access  Private
+exports.bookmarkPost = async (req, res) => {
+  try {
+    const { userId, postId } = req.params;
+
+    // Check if user is authorized (can only bookmark for themselves)
+    if (userId !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to bookmark posts for this user'
+      });
+    }
+
+    // Check if post exists
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    // Get current user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if already bookmarked
+    const isBookmarked = user.bookmarks.includes(postId);
+
+    if (isBookmarked) {
+      // Unbookmark - remove post from bookmarks
+      user.bookmarks = user.bookmarks.filter(
+        id => id.toString() !== postId
+      );
+    } else {
+      // Bookmark - add post to bookmarks
+      user.bookmarks.push(postId);
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      isBookmarked: !isBookmarked, // true if now bookmarked, false if unbookmarked
+      bookmarkCount: user.bookmarks.length
+    });
+
+  } catch (error) {
+    console.error('Bookmark post error:', error);
+    
+    if (error.kind === 'ObjectId') {
+      return res.status(404).json({
+        success: false,
+        message: 'Post or user not found'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+// @desc    Get user's bookmarked posts
+// @route   GET /api/users/:userId/bookmarks
+// @access  Private (user can only see their own bookmarks)
+exports.getBookmarks = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 30;
+    const skip = (page - 1) * limit;
+
+    // Check if user is authorized (can only see their own bookmarks)
+    if (userId !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view bookmarks for this user'
+      });
+    }
+
+    // Get user with bookmarks
+    const user = await User.findById(userId).populate({
+      path: 'bookmarks',
+      select: '_id image title likeCount commentCount views createdAt',
+      options: {
+        sort: { createdAt: -1 },
+        skip: skip,
+        limit: limit
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Format posts for response
+    const formattedPosts = user.bookmarks.map(post => ({
+      id: post._id,
+      image: post.image, // Just filename
+      title: post.title,
+      likes: post.likeCount,
+      comments: post.commentCount,
+      views: post.views,
+      createdAt: post.createdAt
+    }));
+
+    const total = user.bookmarks.length;
+
+    res.status(200).json({
+      success: true,
+      bookmarks: formattedPosts,
+      totalBookmarks: total,
+      page: page,
+      hasMore: total > page * limit
+    });
+
+  } catch (error) {
+    console.error('Get bookmarks error:', error);
     
     if (error.kind === 'ObjectId') {
       return res.status(404).json({
