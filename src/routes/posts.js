@@ -8,12 +8,14 @@ const {
   deletePost,
   likePost,
   getPostComments,
-  addComment
+  addComment,
+  getPostCategorySummary
 } = require('../controllers/postController');
-const { protect, optionalAuth } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
 
 // Public routes
 router.get('/', getAllPosts);
+router.get('/categories', getPostCategorySummary);
 router.get('/:id', getPost);
 router.get('/:id/comments', getPostComments);
 
@@ -25,4 +27,3 @@ router.post('/:id/like', protect, likePost);
 router.post('/:id/comments', protect, addComment);
 
 module.exports = router;
-

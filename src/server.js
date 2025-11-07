@@ -82,10 +82,12 @@ const authRoutes = require('./routes/auth');
 const postRoutes = require('./routes/posts');
 const userRoutes = require('./routes/users');
 const commentRoutes = require('./routes/comments');
+const categoryRoutes = require('./routes/categories');
 const chatRoutes = require('./routes/chat');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
+app.use('/api/categories', categoryRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/comments', commentRoutes);

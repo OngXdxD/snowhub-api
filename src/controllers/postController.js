@@ -1,5 +1,61 @@
 const Post = require('../models/Post');
 const Comment = require('../models/Comment');
+const Category = require('../models/Category');
+
+const normalizeCategoryName = (name) => {
+  if (typeof name !== 'string') return '';
+  return name.trim().replace(/\s+/g, ' ');
+};
+
+const titleCase = (str) => str.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+
+const resolveCategories = async (categories) => {
+  if (!categories) return [];
+  if (!Array.isArray(categories)) {
+    throw Object.assign(new Error('Categories must be an array of strings'), { statusCode: 400 });
+  }
+
+  const normalized = [...new Set(
+    categories
+      .filter((name) => typeof name === 'string' && name.trim())
+      .map((name) => normalizeCategoryName(name))
+  )];
+
+  if (!normalized.length) {
+    return [];
+  }
+
+  const categoryDocs = await Category.find({
+    normalizedName: { $in: normalized.map((name) => name.toLowerCase()) }
+  });
+
+  if (categoryDocs.length !== normalized.length) {
+    const foundNames = categoryDocs.map((cat) => cat.normalizedName);
+    const missing = normalized.filter((name) => !foundNames.includes(name.toLowerCase()));
+    throw Object.assign(new Error(`Unknown categories: ${missing.join(', ')}`), { statusCode: 400 });
+  }
+
+  const docMap = new Map(categoryDocs.map((doc) => [doc.normalizedName, doc]));
+  return normalized.map((name) => docMap.get(name.toLowerCase()));
+};
+
+const formatCategories = (categories) => {
+  if (!categories) return [];
+  return categories.map((cat) => ({
+    id: cat._id || cat,
+    name: cat.name ? cat.name : undefined
+  })).filter((cat) => cat.name);
+};
+
+const formatPost = (post) => {
+  if (!post) return null;
+  const obj = post.toObject ? post.toObject({ virtuals: true }) : post;
+
+  return {
+    ...obj,
+    categories: formatCategories(obj.categories)
+  };
+};
 
 // @desc    Get all posts with pagination, sorting, and filtering
 // @route   GET /api/posts
@@ -28,6 +84,30 @@ exports.getAllPosts = async (req, res) => {
       ];
     }
 
+    if (req.query.categories) {
+      const categoryNames = req.query.categories.split(',').map((name) => normalizeCategoryName(name));
+      const categoryDocs = await Category.find({
+        normalizedName: { $in: categoryNames.map((name) => name.toLowerCase()) }
+      });
+
+      if (!categoryDocs.length) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            posts: [],
+            pagination: {
+              current: page,
+              pages: 0,
+              total: 0,
+              limit
+            }
+          }
+        });
+      }
+
+      filter.categories = { $in: categoryDocs.map((cat) => cat._id) };
+    }
+
     // Build sort object
     let sort = {};
     switch (req.query.sort) {
@@ -48,6 +128,7 @@ exports.getAllPosts = async (req, res) => {
     // Execute query
     const posts = await Post.find(filter)
       .populate('author', 'username avatar')
+      .populate('categories', 'name')
       .sort(sort)
       .skip(skip)
       .limit(limit);
@@ -58,7 +139,7 @@ exports.getAllPosts = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        posts,
+        posts: posts.map(formatPost),
         pagination: {
           current: page,
           pages: Math.ceil(total / limit),
@@ -82,7 +163,8 @@ exports.getAllPosts = async (req, res) => {
 exports.getPost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id)
-      .populate('author', 'username avatar bio followers following');
+      .populate('author', 'username avatar bio followers following')
+      .populate('categories', 'name');
 
     if (!post) {
       return res.status(404).json({
@@ -97,7 +179,7 @@ exports.getPost = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: post
+      data: formatPost(post)
     });
   } catch (error) {
     console.error('Get post error:', error);
@@ -121,7 +203,7 @@ exports.getPost = async (req, res) => {
 // @access  Private
 exports.createPost = async (req, res) => {
   try {
-    const { title, content, tag, location, image } = req.body;
+    const { title, content, tag, location, image, categories } = req.body;
 
     // Validate required fields
     if (!title || !content || !image) {
@@ -154,6 +236,20 @@ exports.createPost = async (req, res) => {
       });
     }
 
+    let categoryDocs = [];
+
+    if (categories) {
+      try {
+        categoryDocs = await resolveCategories(categories);
+      } catch (err) {
+        const statusCode = err.statusCode || 400;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message
+        });
+      }
+    }
+
     // Create post - image is just a filename (already uploaded to R2)
     const post = await Post.create({
       title: title.trim(),
@@ -161,16 +257,18 @@ exports.createPost = async (req, res) => {
       image: image.trim(), // Store filename only
       author: req.user._id,
       tag: tag?.trim() || 'Other',
-      location: location?.trim() || ''
+      location: location?.trim() || '',
+      categories: categoryDocs.map((cat) => cat._id)
     });
 
-    // Populate author details
+    // Populate author and categories details
     await post.populate('author', 'username avatar');
+    await post.populate('categories', 'name');
 
     res.status(201).json({
       success: true,
       message: 'Post created successfully',
-      data: post
+      data: formatPost(post)
     });
   } catch (error) {
     console.error('Create post error:', error);
@@ -203,7 +301,7 @@ exports.updatePost = async (req, res) => {
       });
     }
 
-    const { title, content, tag, location, image } = req.body;
+    const { title, content, tag, location, image, categories } = req.body;
 
     // Update fields with validation
     if (title) {
@@ -227,7 +325,7 @@ exports.updatePost = async (req, res) => {
     }
 
     if (tag) post.tag = tag.trim();
-    if (location !== undefined) post.location = location.trim();
+    if (location !== undefined) post.location = typeof location === 'string' ? location.trim() : '';
 
     // Handle image update - image is just a filename (already uploaded to R2)
     if (image) {
@@ -240,13 +338,27 @@ exports.updatePost = async (req, res) => {
       post.image = image.trim();
     }
 
+    if (categories !== undefined) {
+      try {
+        const categoryDocs = await resolveCategories(categories);
+        post.categories = categoryDocs.map((cat) => cat._id);
+      } catch (err) {
+        const statusCode = err.statusCode || 400;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message
+        });
+      }
+    }
+
     await post.save();
     await post.populate('author', 'username avatar');
+    await post.populate('categories', 'name');
 
     res.status(200).json({
       success: true,
       message: 'Post updated successfully',
-      data: post
+      data: formatPost(post)
     });
   } catch (error) {
     console.error('Update post error:', error);
@@ -454,3 +566,43 @@ exports.addComment = async (req, res) => {
   }
 };
 
+// @desc    Get category usage summary
+// @route   GET /api/posts/categories
+// @access  Public
+exports.getPostCategorySummary = async (req, res) => {
+  try {
+    const summary = await Post.aggregate([
+      { $unwind: '$categories' },
+      { $group: { _id: '$categories', count: { $sum: 1 } } },
+      {
+        $lookup: {
+          from: 'categories',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'category'
+        }
+      },
+      { $unwind: '$category' },
+      {
+        $project: {
+          _id: 0,
+          id: '$category._id',
+          name: '$category.name',
+          count: '$count'
+        }
+      },
+      { $sort: { name: 1 } }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      categories: summary
+    });
+  } catch (error) {
+    console.error('Get post category summary error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};

@@ -32,6 +32,10 @@ const postSchema = new mongoose.Schema({
     trim: true,
     maxlength: [100, 'Location cannot exceed 100 characters']
   },
+  categories: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category'
+  }],
   likes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -55,6 +59,7 @@ const postSchema = new mongoose.Schema({
 // Index for better query performance
 postSchema.index({ author: 1, createdAt: -1 });
 postSchema.index({ tag: 1, createdAt: -1 });
+postSchema.index({ categories: 1, createdAt: -1 });
 postSchema.index({ createdAt: -1 });
 
 // Update likeCount when likes array changes
